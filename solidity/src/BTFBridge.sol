@@ -519,4 +519,12 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         // Check if signer is the minter canister
         require(signer == minterCanisterAddress, "Invalid signature");
     }
+
+    receive() external payable {
+        require(msg.value > 0, "Cannot send zero ETH");
+    }
+
+    fallback() external payable {
+        revert("Fallback function called; unsupported transaction");
+    }
 }
