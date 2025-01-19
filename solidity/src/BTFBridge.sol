@@ -27,7 +27,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     uint8 public constant MINT_ERROR_CODE_PROCESSING_NOT_REQUESTED = 7;
 
     // Address for native tokens
-    address public constant NATIVE_TOKEN_ADDRESS = address(0);
+    // address public constant NATIVE_TOKEN_ADDRESS = address(0);
 
     // Gas fee for batch mint operation.
     uint256 constant COMMON_BATCH_MINT_GAS_FEE = 200000;
