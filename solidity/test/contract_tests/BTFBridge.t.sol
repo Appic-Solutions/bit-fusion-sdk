@@ -971,6 +971,59 @@ function setupBaseBridge() internal {
     _baseBridge = BTFBridge(payable(baseProxy));
 }
 
+function testBurnNativeTokenInvalidAmount() public {
+    // Setup exactly like successful test
+    vm.deal(_alice, 2 ether); // Giving more than enough ETH
+    
+    bytes32 toTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    bytes memory recipientId = abi.encodePacked(uint8(1), uint8(2), uint8(3));
+    
+    // Initial balances
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    
+    vm.startPrank(_alice);
+    
+    // Try to burn with mismatched values
+    vm.expectRevert(bytes("Incorrect ETH amount sent"));
+    _baseBridge.burn{value: 1.5 ether}(  // Send more ETH than specified
+        1 ether,
+        _baseBridge.NATIVE_TOKEN_ADDRESS(),
+        toTokenId,
+        recipientId,
+        bytes32(0)
+    );
+    
+    vm.stopPrank();
 }
 
+function testBurnNativeTokenInsufficientBalance() public {
+    // Setup exactly like successful test but with insufficient funds
+    vm.deal(_alice, 0.5 ether); // Only give 0.5 ETH
+    
+    bytes32 toTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    bytes memory recipientId = abi.encodePacked(uint8(1), uint8(2), uint8(3));
+    uint256 burnAmount = 1 ether;
+    
+    // Initial balances
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    uint256 initialAliceBalance = _alice.balance;
+    
+    vm.startPrank(_alice);
+    
+    // Try to send more than we have
+    vm.expectRevert();
+    _baseBridge.burn{value: burnAmount}(
+        burnAmount,
+       _baseBridge.NATIVE_TOKEN_ADDRESS(),
+        toTokenId,
+        recipientId,
+        bytes32(0)
+    );
+    
+    vm.stopPrank();
+}
+
+}
+
+ 
 
