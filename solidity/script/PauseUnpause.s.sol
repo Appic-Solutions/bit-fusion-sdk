@@ -22,7 +22,7 @@ contract PauseUnpauseScript is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerPrivateKey);
 
-        BTFBridge bridge = BTFBridge(contractAddress);
+        BTFBridge bridge = BTFBridge(payable(contractAddress));
 
         if (shouldPause) {
             bridge.pause();

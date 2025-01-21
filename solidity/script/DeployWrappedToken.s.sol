@@ -8,7 +8,7 @@ import "src/BTFBridge.sol";
 contract DeployWrappedToken is Script {
     function run() external {
         // Load environment variables or parameters
-        address btfBridgeAddress = vm.envAddress("BTF_BRIDGE");
+        address payable btfBridgeAddress = payable(vm.envAddress("BTF_BRIDGE"));
         string memory name = vm.envString("NAME");
         string memory symbol = vm.envString("SYMBOL");
         uint8 decimals = uint8(vm.envUint("DECIMALS"));

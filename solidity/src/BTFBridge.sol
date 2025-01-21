@@ -26,6 +26,9 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     uint8 public constant MINT_ERROR_CODE_TOKENS_NOT_BRIDGED = 6;
     uint8 public constant MINT_ERROR_CODE_PROCESSING_NOT_REQUESTED = 7;
 
+    // Address for native tokens
+    // address public constant NATIVE_TOKEN_ADDRESS = address(0);
+
     // Gas fee for batch mint operation.
     uint256 constant COMMON_BATCH_MINT_GAS_FEE = 200000;
 
@@ -292,21 +295,31 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     function _mintInner(
         MintOrderData memory order
     ) private {
-        // Update token's metadata only if it is a wrapped token
-        bool isTokenWrapped = _wrappedToBase[order.toERC20] == order.fromTokenID;
-        // the token must be registered or the side must be base
-        require(isBaseSide() || isTokenWrapped, "Invalid token pair");
+        // Check if the token is native or ERC-20
+        if (order.toERC20 == NATIVE_TOKEN_ADDRESS) {
+            // Native token handling
+            require(address(this).balance >= order.amount, "Insufficient ETH balance in the contract");
+            (bool success,) = order.recipient.call{ value: order.amount }("");
+            require(success, "Failed to send ETH");
+        } else {
+            // ERC-20 handling
+            // Update token's metadata only if it is a wrapped token
+            bool isTokenWrapped = _wrappedToBase[order.toERC20] == order.fromTokenID;
+            // the token must be registered or the side must be base
+            require(isBaseSide() || isTokenWrapped, "Invalid token pair");
 
-        if (isTokenWrapped) {
-            updateTokenMetadata(order.toERC20, order.name, order.symbol, order.decimals);
-        }
+            if (isTokenWrapped) {
+                updateTokenMetadata(order.toERC20, order.name, order.symbol, order.decimals);
+            }
 
-        // Execute the withdrawal
-        _isNonceUsed[order.senderID][order.nonce] = true;
-        IERC20(order.toERC20).safeTransfer(order.recipient, order.amount);
+            // Execute the withdrawal
+            _isNonceUsed[order.senderID][order.nonce] = true;
+            IERC20(order.toERC20).safeTransfer(order.recipient, order.amount);
 
-        if (order.approveSpender != address(0) && order.approveAmount != 0 && isTokenWrapped) {
-            WrappedToken(order.toERC20).approveByOwner(order.recipient, order.approveSpender, order.approveAmount);
+            // Approve spender for ERC-20 if applicable
+            if (order.approveSpender != address(0) && order.approveAmount != 0 && isTokenWrapped) {
+                WrappedToken(order.toERC20).approveByOwner(order.recipient, order.approveSpender, order.approveAmount);
+            }
         }
     }
 
@@ -329,34 +342,44 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         blockNumbers = _lastUserBurns[msg.sender].getAll();
     }
 
-    /// Burn ERC 20 tokens there to make possible perform a mint on other side of the bridge.
-    /// Caller should approve transfer in the given `from_erc20` token for the bridge contract.
-    /// Returns operation ID if operation is succesfull.
+    /// Burn ERC-20 and native tokens there to make possible perform a mint on other side of the bridge.
+    /// If Erc20, caller should approve transfer in the given `from_erc20` token for the bridge contract.
+    /// If native caller should provide msg.value .
+    /// Returns operation ID if operation is successful.
     function burn(
         uint256 amount,
         address fromERC20,
         bytes32 toTokenID,
         bytes memory recipientID,
         bytes32 memo
-    ) public whenNotPaused returns (uint32) {
-        require(fromERC20 != address(this), "From address must not be BTF bridge address");
-        require(fromERC20 != address(0), "Invalid from address; must not be zero address");
+    ) public payable whenNotPaused returns (uint32) {
         // Check if the token is registered on the bridge or the side is base
         require(
             isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
             "Invalid from address; not registered in the bridge"
         );
         require(amount > 0, "Invalid burn amount");
-        uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
-        // Check if the user has enough allowance; on wrapped side, the bridge will approve the tokens by itself
-        require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
 
-        // Authorize the bridge to transfer the tokens if the side is wrapped
-        if (isWrappedSide && currentAllowance < amount) {
-            WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
+        if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
+            // Native token handling
+            require(msg.value == amount, "Incorrect ETH amount sent");
+        } else {
+            // ERC-20 handling
+            require(fromERC20 != address(this), "Invalid fromERC20 address");
+            require(fromERC20 != address(0), "Invalid fromERC20 address");
+
+            uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
+
+            // Check if the user has enough allowance; on wrapped side, the bridge will approve the tokens by itself
+            require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
+
+            // Authorize the bridge to transfer the tokens if the side is wrapped
+            if (isWrappedSide && currentAllowance < amount) {
+                WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
+            }
+
+            IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
         }
-
-        IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
 
         // Update user information about burn operations.
         _lastUserBurns[msg.sender].push(uint32(block.number));
@@ -495,5 +518,13 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
         // Check if signer is the minter canister
         require(signer == minterCanisterAddress, "Invalid signature");
+    }
+
+    receive() external payable {
+        require(msg.value > 0, "Cannot send zero ETH");
+    }
+
+    fallback() external payable {
+        revert("Fallback function called; unsupported transaction");
     }
 }

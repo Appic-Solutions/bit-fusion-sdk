@@ -2,7 +2,7 @@
 pragma solidity ^0.8.7;
 
 import "forge-std/Test.sol";
-import "forge-std/console.sol";
+import "forge-std/console2.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "src/BTFBridge.sol";
 import "src/test_contracts/UUPSProxy.sol";
@@ -77,8 +77,7 @@ contract BTFBridgeTest is Test {
         wrappedProxy = address(wrappedProxyContract);
 
         // Cast the proxy to BTFBridge
-        _wrappedBridge = BTFBridge(address(wrappedProxy));
-
+    _wrappedBridge = BTFBridge(payable(address(wrappedProxy)));
         // Encode the initialization call
         bytes memory baseInitializeData = abi.encodeWithSelector(
             BTFBridge.initialize.selector, _owner, address(0), _wrappedTokenDeployer, false, _owner, initialControllers
@@ -91,7 +90,8 @@ contract BTFBridgeTest is Test {
         baseProxy = address(baseProxyContract);
 
         // Cast the proxy to BTFBridge
-        _baseBridge = BTFBridge(address(baseProxy));
+       _baseBridge = BTFBridge(payable(address(baseProxy)));
+    require(_baseBridge.isWrappedSide() == false, "Base bridge not properly initialized");
 
         vm.stopPrank();
     }
@@ -587,7 +587,7 @@ contract BTFBridgeTest is Test {
         assertTrue(_wrappedBridge.allowedImplementations(newImplementation.codehash));
 
         // Wrap in ABI for easier testing
-        BTFBridge proxy = BTFBridge(wrappedProxy);
+       BTFBridge proxy = BTFBridge(payable(wrappedProxy));
 
         // pass empty calldata to initialize
         bytes memory data = new bytes(0);
@@ -603,7 +603,7 @@ contract BTFBridgeTest is Test {
         newImplementation = address(_newImpl);
         // Wrap in ABI for easier testing
 
-        BTFBridge proxy = BTFBridge(wrappedProxy);
+         BTFBridge proxy = BTFBridge(payable(wrappedProxy));
         // pass empty calldata to initialize
         bytes memory data = new bytes(0);
         vm.expectRevert();
@@ -833,4 +833,197 @@ contract BTFBridgeTest is Test {
     function _createIdFromAddress(address addr, uint32 chainID) private pure returns (bytes32) {
         return bytes32(abi.encodePacked(uint8(1), chainID, addr));
     }
+
+
+
+    //// tests for the native token
+
+    function testBatchMintNativeToken() public {
+    // Fund the bridge with ETH for minting
+    vm.deal(address(_wrappedBridge), 10 ether);
+    
+    // Create native token mint order
+    bytes32 base_token_id = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    MintOrder memory order = _createDefaultMintOrder();
+    order.amount = 1 ether;
+    order.toERC20 = _wrappedBridge.NATIVE_TOKEN_ADDRESS();
+    order.recipient = payable(_alice);
+    
+    MintOrder[] memory orders = new MintOrder[](1);
+    orders[0] = order;
+    bytes memory encodedOrders = _batchMintOrders(orders);
+    bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+
+    uint32[] memory ordersToProcess = new uint32[](1);
+    ordersToProcess[0] = 0;
+
+    // Record initial balance
+    uint256 initialBalance = _alice.balance;
+
+    // Execute mint
+    uint8[] memory processedOrders = _wrappedBridge.batchMint(encodedOrders, signature, ordersToProcess);
+
+    assertEq(processedOrders[0], _wrappedBridge.MINT_ERROR_CODE_OK());
+    assertEq(_alice.balance - initialBalance, order.amount);
 }
+
+function testBurnNativeToken() public {
+    
+// Setup: Fund the account
+    vm.deal(_alice, 1 ether);
+    
+    bytes32 toTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    bytes memory recipientId = abi.encodePacked(uint8(1), uint8(2), uint8(3));
+    uint256 burnAmount = 1 ether;
+    
+    vm.startPrank(_alice);
+    
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    uint256 initialAliceBalance = _alice.balance;
+    
+    uint32 operationId = _baseBridge.burn{value: burnAmount}(
+        burnAmount,
+        _baseBridge.NATIVE_TOKEN_ADDRESS(),
+        toTokenId,
+        recipientId,
+        bytes32(0)
+    );
+
+    vm.stopPrank();
+
+    // Verify balances
+    assertEq(address(_baseBridge).balance - initialBridgeBalance, burnAmount, "Bridge balance should increase");
+    assertEq(_alice.balance, initialAliceBalance - burnAmount, "Alice balance should decrease");
+}
+
+
+
+
+function testBatchMintMixedTokens() public {
+    // Fund bridge with ETH
+    vm.deal(address(_wrappedBridge), 10 ether);
+    
+    // Setup ERC20 order
+    bytes32 base_token_id_1 = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    address token1 = _wrappedBridge.deployERC20("Token1", "TK1", 18, base_token_id_1);
+    MintOrder memory order_1 = _createDefaultMintOrder(base_token_id_1, token1, 0);
+    
+    // Setup Native token order
+    bytes32 base_token_id_2 = _createIdFromPrincipal(abi.encodePacked(uint8(2)));
+    MintOrder memory order_2 = _createDefaultMintOrder();
+    order_2.amount = 1 ether;
+    order_2.toERC20 = _wrappedBridge.NATIVE_TOKEN_ADDRESS();
+    order_2.recipient = payable(_bob);
+    order_2.nonce = 1;
+
+    // Create batch mint orders
+    MintOrder[] memory orders = new MintOrder[](2);
+    orders[0] = order_1;
+    orders[1] = order_2;
+    
+    bytes memory encodedOrders = _batchMintOrders(orders);
+    bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+
+    uint32[] memory ordersToProcess = new uint32[](2);
+    ordersToProcess[0] = 0;
+    ordersToProcess[1] = 1;
+
+    // Record initial balances
+    uint256 initialEthBalance = _bob.balance;
+    
+    // Execute batch mint
+    uint8[] memory processedOrders = _wrappedBridge.batchMint(encodedOrders, signature, ordersToProcess);
+
+    // Verify both transactions
+    assertEq(processedOrders[0], _wrappedBridge.MINT_ERROR_CODE_OK());
+    assertEq(processedOrders[1], _wrappedBridge.MINT_ERROR_CODE_OK());
+    
+    // Verify balances
+    assertEq(WrappedToken(token1).balanceOf(_alice), order_1.amount);
+    assertEq(_bob.balance - initialEthBalance, order_2.amount);
+}
+
+// Add this helper function to ensure correct initialization
+function ensureBaseBridgeSetup() private {
+    // Add any necessary setup for base bridge
+    require(_baseBridge.isWrappedSide() == false, "Must use base side for native tokens");
+}
+// Add these helper functions to BTFBridgeTest
+function setupBaseBridge() internal {
+    // Initialize base bridge data
+    bytes[] memory data = new bytes[](0);
+    address[] memory initialControllers = new address[](0);
+
+    // Initialize base bridge with correct parameters
+    bytes memory baseInitData = abi.encodeWithSelector(
+        BTFBridge.initialize.selector,
+        _owner,  // minter address
+        address(0),  // fee charge address
+        address(_wrappedTokenDeployer),
+        false,  // isWrappedSide = false for base bridge
+        _owner,  // owner
+        initialControllers
+    );
+    
+    BTFBridge baseImpl = new BTFBridge();
+    UUPSProxy baseProxyContract = new UUPSProxy(address(baseImpl), baseInitData);
+    baseProxy = payable(address(baseProxyContract));
+    _baseBridge = BTFBridge(payable(baseProxy));
+}
+
+function testBurnNativeTokenInvalidAmount() public {
+    // Setup exactly like successful test
+    vm.deal(_alice, 2 ether); // Giving more than enough ETH
+    
+    bytes32 toTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    bytes memory recipientId = abi.encodePacked(uint8(1), uint8(2), uint8(3));
+    
+    // Initial balances
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    
+    vm.startPrank(_alice);
+    
+    // Try to burn with mismatched values
+    vm.expectRevert(bytes("Incorrect ETH amount sent"));
+    _baseBridge.burn{value: 1.5 ether}(  // Send more ETH than specified
+        1 ether,
+        _baseBridge.NATIVE_TOKEN_ADDRESS(),
+        toTokenId,
+        recipientId,
+        bytes32(0)
+    );
+    
+    vm.stopPrank();
+}
+
+function testBurnNativeTokenInsufficientBalance() public {
+    // Setup exactly like successful test but with insufficient funds
+    vm.deal(_alice, 0.5 ether); // Only give 0.5 ETH
+    
+    bytes32 toTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    bytes memory recipientId = abi.encodePacked(uint8(1), uint8(2), uint8(3));
+    uint256 burnAmount = 1 ether;
+    
+    // Initial balances
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    uint256 initialAliceBalance = _alice.balance;
+    
+    vm.startPrank(_alice);
+    
+    // Try to send more than we have
+    vm.expectRevert();
+    _baseBridge.burn{value: burnAmount}(
+        burnAmount,
+       _baseBridge.NATIVE_TOKEN_ADDRESS(),
+        toTokenId,
+        recipientId,
+        bytes32(0)
+    );
+    
+    vm.stopPrank();
+}
+
+}
+
+ 
+

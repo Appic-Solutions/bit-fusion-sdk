@@ -12,7 +12,7 @@ contract WrappedToken is ERC20, IWrappedToken {
     string private _symbol;
     uint8 private _decimals;
 
-    // Initializes contract with the given name and symbl
+    // Initializes contract with the given name and symbol
     constructor(string memory name_, string memory symbol_, uint8 decimals_, address _owner) ERC20(name_, symbol_) {
         owner = _owner;
         _name = name_;
@@ -57,7 +57,7 @@ contract WrappedToken is ERC20, IWrappedToken {
 
     // Updates token name, symbol and decimals if needed.
     function setMetaData(bytes32 name_, bytes16 symbol_, uint8 decimals_) public {
-        require(msg.sender == owner, "Unauthorised Access");
+        require(msg.sender == owner, "Unauthorized Access");
         if (symbol_ != 0x0) {
             if (bytes16(bytes(_symbol)) != symbol_) {
                 _symbol = string(abi.encodePacked(symbol_));

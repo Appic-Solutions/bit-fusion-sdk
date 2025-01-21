@@ -14,6 +14,9 @@ abstract contract TokenManager is Initializable {
     // Indicates whether this contract is on the wrapped side
     bool public isWrappedSide;
 
+    // Address representing the native token
+    address public constant NATIVE_TOKEN_ADDRESS = address(0);
+
     /// Mapping from `base token id` (can be anything, also ERC20 address) to Wrapped tokens ERC20 address
     mapping(bytes32 => address) internal _baseToWrapped;
 
@@ -73,6 +76,7 @@ abstract contract TokenManager is Initializable {
 
     /// Update token's metadata
     function updateTokenMetadata(address token, bytes32 name, bytes16 symbol, uint8 decimals) internal {
+        require(token != NATIVE_TOKEN_ADDRESS, "Cannot update metadata for native token");
         IWrappedToken(token).setMetaData(name, symbol, decimals);
     }
 
@@ -80,15 +84,22 @@ abstract contract TokenManager is Initializable {
     function getTokenMetadata(
         address token
     ) internal view returns (TokenMetadata memory meta) {
-        try IERC20Metadata(token).name() returns (string memory _name) {
-            meta.name = StringUtils.truncateUTF8(_name);
-        } catch { }
-        try IERC20Metadata(token).symbol() returns (string memory _symbol) {
-            meta.symbol = bytes16(StringUtils.truncateUTF8(_symbol));
-        } catch { }
-        try IERC20Metadata(token).decimals() returns (uint8 _decimals) {
-            meta.decimals = _decimals;
-        } catch { }
+        if (token == NATIVE_TOKEN_ADDRESS) {
+            // Native token metadata
+            meta.name = bytes32("ETH");
+            meta.symbol = bytes16("ETH");
+            meta.decimals = 18; // Default for ETH
+        } else {
+            try IERC20Metadata(token).name() returns (string memory _name) {
+                meta.name = StringUtils.truncateUTF8(_name);
+            } catch { }
+            try IERC20Metadata(token).symbol() returns (string memory _symbol) {
+                meta.symbol = bytes16(StringUtils.truncateUTF8(_symbol));
+            } catch { }
+            try IERC20Metadata(token).decimals() returns (uint8 _decimals) {
+                meta.decimals = _decimals;
+            } catch { }
+        }
     }
 
     /// Returns wrapped token for the given base token
