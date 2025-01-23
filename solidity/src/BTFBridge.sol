@@ -106,7 +106,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         bytes32 memo
     );
 
-    /// Event that can be emited with a notification for the minter canister
+    /// Event that can be emitted with a notification for the minter canister
     event NotifyMinterEvent(uint32 notificationType, address txSender, bytes userData, bytes32 memo);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -279,7 +279,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
         for (uint32 i = 0; i < ordersNumber; i++) {
             if (processedOrderIndexes[i] == MINT_ERROR_CODE_OK) {
-                // Array indexes inlined to soleve StackTooDeep problem.
+                // Array indexes inlined to solve StackTooDeep problem.
                 MintOrderData memory order =
                     _decodeOrder(encodedOrders[MINT_ORDER_DATA_LEN * i:MINT_ORDER_DATA_LEN * i + MINT_ORDER_DATA_LEN]);
                 if (_isFeeRequired()) {
