@@ -357,7 +357,12 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
         require(msg.value == amount, "Incorrect ETH amount sent");
         // Skip token registration check for native token
-    } else {
+    } else if  (_wrappedToBase[fromERC20] == bytes32(0) && toTokenID == bytes32(0)) {
+        // This is wrapped ETH being burned to get native ETH
+        require(!isBaseSide(), "Invalid operation on base side");
+        IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
+    }
+    else {
         // Only check token registration for non-native tokens
         require(
             isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
