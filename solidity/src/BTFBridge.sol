@@ -317,9 +317,9 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
             IERC20(order.toERC20).safeTransfer(order.recipient, order.amount);
 
             // Approve spender for ERC-20 if applicable
-                if (order.approveSpender != address(0) && order.approveAmount != 0 && isTokenWrapped) {
-                    WrappedToken(order.toERC20).approveByOwner(order.recipient, order.approveSpender, order.approveAmount);
-                }
+            if (order.approveSpender != address(0) && order.approveAmount != 0 && isTokenWrapped) {
+                WrappedToken(order.toERC20).approveByOwner(order.recipient, order.approveSpender, order.approveAmount);
+            }
         }
     }
 
@@ -353,60 +353,60 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         bytes memory recipientID,
         bytes32 memo
     ) public payable whenNotPaused returns (uint32) {
-         // Handle native token case first
-    if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
-        require(msg.value == amount, "Incorrect ETH amount sent");
-        // Skip token registration check for native token
-    } else {
-        // Only check token registration for non-native tokens
-        require(
-            isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
-            "Invalid from address; not registered in the bridge"
-        );
-        
-        // Rest of ERC20 handling
-        require(fromERC20 != address(this), "Invalid fromERC20 address");
-        require(fromERC20 != address(0), "Invalid fromERC20 address");
+        // Handle native token case first
+        if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
+            require(msg.value == amount, "Incorrect ETH amount sent");
+            // Skip token registration check for native token
+        } else {
+            // Only check token registration for non-native tokens
+            require(
+                isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
+                "Invalid from address; not registered in the bridge"
+            );
 
-        uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
-        require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
+            // Rest of ERC20 handling
+            require(fromERC20 != address(this), "Invalid fromERC20 address");
+            require(fromERC20 != address(0), "Invalid fromERC20 address");
 
-        if (isWrappedSide && currentAllowance < amount) {
-            WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
+            uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
+            require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
+
+            if (isWrappedSide && currentAllowance < amount) {
+                WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
+            }
+
+            IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
         }
 
-        IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
-    }
+        // Common operations for both native and ERC20
+        _lastUserBurns[msg.sender].push(uint32(block.number));
 
-    // Common operations for both native and ERC20
-    _lastUserBurns[msg.sender].push(uint32(block.number));
+        // Get token metadata
+        TokenMetadata memory meta;
+        if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
+            meta.name = bytes32("Ethereum");
+            meta.symbol = bytes16("ETH");
+            meta.decimals = 18;
+        } else {
+            meta = getTokenMetadata(fromERC20);
+        }
 
-    // Get token metadata
-    TokenMetadata memory meta;
-    if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
-        meta.name = bytes32("Ethereum");
-        meta.symbol = bytes16("ETH");
-        meta.decimals = 18;
-    } else {
-        meta = getTokenMetadata(fromERC20);
-    }
+        uint32 operationID = operationIDCounter++;
 
-    uint32 operationID = operationIDCounter++;
+        emit BurnTokenEvent(
+            msg.sender,
+            amount,
+            fromERC20,
+            recipientID,
+            toTokenID,
+            operationID,
+            meta.name,
+            meta.symbol,
+            meta.decimals,
+            memo
+        );
 
-    emit BurnTokenEvent(
-        msg.sender,
-        amount,
-        fromERC20,
-        recipientID,
-        toTokenID,
-        operationID,
-        meta.name,
-        meta.symbol,
-        meta.decimals,
-        memo
-    );
-
-    return operationID;
+        return operationID;
     }
 
     /// Getter function for minter address
@@ -417,31 +417,6 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     /// Returns true if mint fee must be charged.
     function _isFeeRequired() private view returns (bool) {
         return minterCanisterAddress == msg.sender && address(feeChargeContract) != address(0);
-    }
-
-    /// Function to validate the mint order.
-    /// Reverts on failure.
-    function _validateOrder(
-        MintOrderData memory order
-    ) private view {
-    require(order.recipient != address(0), "Invalid destination address");
-    require(order.amount > 0, "Invalid order amount");
-    require(!_isNonceUsed[order.senderID][order.nonce], "Invalid nonce");
-    require(block.chainid == order.recipientChainID, "Invalid chain ID");
-
-    //  Handle ETH separately before checking ERC-20 logic
-    if (order.toERC20 == NATIVE_TOKEN_ADDRESS) {
-        return; // Native ETH is valid, skip further checks
-    }
-
-    // Ensure the token is registered
-    require(_wrappedToBase[order.toERC20] != bytes32(0), "Token must be registered in bridge");
-
-    // Ensure ERC-20 token pair is valid (Only applies to ERC-20s)
-    require(
-        _baseToWrapped[order.fromTokenID] != address(0) && _baseToWrapped[order.fromTokenID] == order.toERC20,
-        "SRC token and DST token must be a valid pair"
-    );
     }
 
     /// Function to check if the mint order is valid.
@@ -468,8 +443,8 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
             return MINT_ERROR_CODE_UNEXPECTED_RECIPIENT_CHAIN_ID;
         }
 
-         // Handle ETH separately before checking ERC-20 logic
-        if (order.toERC20 == NATIVE_TOKEN_ADDRESS ) {
+        // Handle ETH separately before checking ERC-20 logic
+        if (order.toERC20 == NATIVE_TOKEN_ADDRESS) {
             return MINT_ERROR_CODE_OK; // Native token operation is valid
         }
 
