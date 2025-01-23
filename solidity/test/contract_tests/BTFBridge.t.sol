@@ -1035,7 +1035,101 @@ function testBurnNativeTokenInsufficientBalance() public {
     vm.stopPrank();
 }
 
+function testValidateOrderWithNativeToken() public {
+      vm.deal(address(_wrappedBridge), 10 ether);
+    // Create a mint order for native token
+    MintOrder memory order = _createDefaultMintOrder();
+    order.toERC20 = _wrappedBridge.NATIVE_TOKEN_ADDRESS();
+    order.fromTokenID = bytes32(0); // native token ID
 
+    MintOrder[] memory orders = new MintOrder[](1);
+    orders[0] = order;
+    bytes memory encodedOrders = _batchMintOrders(orders);
+    bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+
+    uint32[] memory ordersToProcess = new uint32[](1);
+    ordersToProcess[0] = 0;
+
+    // This should pass because we skip ERC20 validation for native token
+    uint8[] memory processedOrders = _wrappedBridge.batchMint(encodedOrders, signature, ordersToProcess);
+    assertEq(processedOrders[0], _wrappedBridge.MINT_ERROR_CODE_OK());
+}
+
+
+// Test burn function's ETH metadata handling
+function testBurnNativeTokenTransfers() public {
+    // Setup base bridge properly
+    bytes[] memory data = new bytes[](0);
+    address[] memory initialControllers = new address[](0);
+    
+    vm.deal(_alice, 1 ether);
+    vm.deal(address(_baseBridge), 1 ether); // Fund bridge too
+    
+    bytes32 toTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    bytes memory recipientId = abi.encodePacked(uint8(1), uint8(2), uint8(3));
+    
+    uint256 initialBalance = _alice.balance;
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+
+    vm.startPrank(_alice);
+    uint32 operationId = _baseBridge.burn{value: 1 ether}(
+        1 ether,
+        address(0), // Native token address
+        toTokenId,
+        recipientId,
+        bytes32(0)
+    );
+    vm.stopPrank();
+
+    assertEq(_alice.balance, initialBalance - 1 ether, "Alice balance didn't decrease");
+    assertEq(address(_baseBridge).balance, initialBridgeBalance + 1 ether, "Bridge balance didn't increase");
+}
+
+
+/// Test validation skips token pair checks for native ETH in _isOrderValid
+function testValidateOrderSkipsTokenPairCheckForNative() public {
+    MintOrder memory order = _createDefaultMintOrder();
+    order.toERC20 = address(0); // Native ETH
+    order.amount = 1 ether;
+    vm.deal(address(_wrappedBridge), 1 ether);
+
+    // Even with unregistered pair, should work for native
+    order.fromTokenID = bytes32(uint256(123)); // Random token ID
+
+    MintOrder[] memory orders = new MintOrder[](1);
+    orders[0] = order;
+    bytes memory encodedOrders = _batchMintOrders(orders);
+    bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+
+    uint32[] memory ordersToProcess = new uint32[](1);
+    ordersToProcess[0] = 0;
+
+    uint8[] memory processedOrders = _wrappedBridge.batchMint(encodedOrders, signature, ordersToProcess);
+    assertEq(processedOrders[0], _wrappedBridge.MINT_ERROR_CODE_OK());
+}
+
+/// Tests that bytes32(0) check doesn't interfere with native ETH handling
+function testBytes32ZeroForNativeToken() public {
+   // Create order with native token (address(0))
+   MintOrder memory order = _createDefaultMintOrder();
+   order.toERC20 = address(0); 
+   order.fromTokenID = bytes32(0);
+   order.amount = 1 ether;
+   
+   vm.deal(address(_wrappedBridge), 1 ether);
+
+   MintOrder[] memory orders = new MintOrder[](1);
+   orders[0] = order;
+   bytes memory encodedOrders = _batchMintOrders(orders);
+   bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+
+   uint32[] memory ordersToProcess = new uint32[](1);
+   ordersToProcess[0] = 0;
+
+   // Should pass even though bytes32(0) is used
+   uint8[] memory processedOrders = _wrappedBridge.batchMint(encodedOrders, signature, ordersToProcess);
+   assertEq(processedOrders[0], _wrappedBridge.MINT_ERROR_CODE_OK());
+}
 
 }
 
