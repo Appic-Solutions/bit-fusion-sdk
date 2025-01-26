@@ -323,6 +323,23 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         }
     }
 
+        /// @dev Deploys a new wrapped ERC20 token. Can only be called by controllers.
+        /// @param name Token name
+        /// @param symbol Token symbol
+        /// @param decimals Token decimals
+        /// @param baseTokenID Base token ID to map to wrapped token
+        /// @return address The deployed wrapped token address
+        /// @inheritdoc TokenManager
+        function deployERC20(
+        string memory name,
+        string memory symbol, 
+        uint8 decimals,
+        bytes32 baseTokenID
+        ) public override onlyControllers returns (address) {
+        return super.deployERC20(name, symbol, decimals, baseTokenID);
+        }
+
+
     /// Charge fee from the user.
     function _chargeFee(address from, uint256 amount) private {
         if (amount != 0) {

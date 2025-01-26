@@ -59,7 +59,7 @@ abstract contract TokenManager is Initializable {
         string memory symbol,
         uint8 decimals,
         bytes32 baseTokenID
-    ) public returns (address) {
+    ) public  returns (address) {
         require(isWrappedSide, "Only for wrapped side");
         require(_baseToWrapped[baseTokenID] == address(0), "Wrapper already exist");
 
@@ -73,7 +73,7 @@ abstract contract TokenManager is Initializable {
 
         return wrappedERC20;
     }
-
+    
     /// Update token's metadata
     function updateTokenMetadata(address token, bytes32 name, bytes16 symbol, uint8 decimals) internal {
         require(token != NATIVE_TOKEN_ADDRESS, "Cannot update metadata for native token");
