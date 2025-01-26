@@ -41,7 +41,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     // Has a user's transaction nonce been used?
     mapping(bytes32 => mapping(uint32 => bool)) private _isNonceUsed;
 
-    // Blocknumbers for users deposit Ids.
+    // Block numbers for users deposit Ids.
     mapping(address => mapping(uint8 => uint32)) private _userDepositBlocks;
 
     // Last 255 user's burn operations.
@@ -323,22 +323,21 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         }
     }
 
-        /// @dev Deploys a new wrapped ERC20 token. Can only be called by controllers.
-        /// @param name Token name
-        /// @param symbol Token symbol
-        /// @param decimals Token decimals
-        /// @param baseTokenID Base token ID to map to wrapped token
-        /// @return address The deployed wrapped token address
-        /// @inheritdoc TokenManager
-        function deployERC20(
+    /// @dev Deploys a new wrapped ERC20 token. Can only be called by controllers.
+    /// @param name Token name
+    /// @param symbol Token symbol
+    /// @param decimals Token decimals
+    /// @param baseTokenID Base token ID to map to wrapped token
+    /// @return address The deployed wrapped token address
+    /// @inheritdoc TokenManager
+    function deployERC20(
         string memory name,
-        string memory symbol, 
+        string memory symbol,
         uint8 decimals,
         bytes32 baseTokenID
-        ) public override onlyControllers returns (address) {
+    ) public override onlyControllers returns (address) {
         return super.deployERC20(name, symbol, decimals, baseTokenID);
-        }
-
+    }
 
     /// Charge fee from the user.
     function _chargeFee(address from, uint256 amount) private {
@@ -384,10 +383,6 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
                 isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
                 "Invalid from address; not registered in the bridge"
             );
-
-            // Rest of ERC20 handling
-            require(fromERC20 != address(this), "Invalid fromERC20 address");
-            require(fromERC20 != address(0), "Invalid fromERC20 address");
 
             // Rest of ERC20 handling
             require(fromERC20 != address(this), "Invalid fromERC20 address");
