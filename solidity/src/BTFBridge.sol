@@ -38,6 +38,9 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     // Minimal amount of fee deposit to process mint order.
     uint256 constant MIN_FEE_DEPOSIT_AMOUNT = COMMON_BATCH_MINT_GAS_FEE + ORDER_BATCH_MINT_GAS_FEE;
 
+    uint256 public burnFeeInWei;
+    uint256 public collectedBurnFees;
+
     // Has a user's transaction nonce been used?
     mapping(bytes32 => mapping(uint32 => bool)) private _isNonceUsed;
 
@@ -109,6 +112,9 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     /// Event that can be emitted with a notification for the minter canister
     event NotifyMinterEvent(uint32 notificationType, address txSender, bytes userData, bytes32 memo);
 
+    event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
+    event BurnFeesWithdrawn(uint256 amount);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         // Locks the contract and prevent any future re-initialization
@@ -129,11 +135,14 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         address wrappedTokenDeployer,
         bool isWrappedSide,
         address owner,
-        address[] memory controllers
+        address[] memory controllers,
+        uint256 _burnFeeInWei
     ) public initializer {
         minterCanisterAddress = minterAddress;
         feeChargeContract = IFeeCharge(feeChargeAddress);
         __TokenManager__init(isWrappedSide, wrappedTokenDeployer);
+
+        burnFeeInWei = _burnFeeInWei;
 
         // Set the owner
         address newOwner = owner != address(0) ? owner : msg.sender;
@@ -149,6 +158,37 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
         __UUPSUpgradeable_init();
         __Pausable_init();
+    }
+
+    /// @dev Updates the burn fee amount that users need to pay when calling burn()
+    /// @param _newFeeInWei New fee amount in wei
+    /// @notice Can only be called by owner
+    /// @notice Emits BurnFeeUpdated event
+    function updateBurnFee(
+        uint256 _newFeeInWei
+    ) external onlyOwner {
+        emit BurnFeeUpdated(burnFeeInWei, _newFeeInWei);
+        burnFeeInWei = _newFeeInWei;
+    }
+
+    /// @dev Withdraws accumulated burn fees to the owner
+    /// @notice Can only be called by owner
+    /// @notice Requires collected fees > 0
+    /// @notice Updates state before transfer (CEI pattern)
+    /// @notice Emits BurnFeesWithdrawn event on successful withdrawal
+
+    function withdrawBurnFees() external onlyOwner {
+        uint256 amount = collectedBurnFees;
+        require(amount > 0, "No fees to withdraw");
+
+        // Update state before transfer
+        collectedBurnFees = 0;
+
+        // Transfer fees
+        (bool success,) = msg.sender.call{ value: amount }("");
+        require(success, "Fee withdrawal failed");
+
+        emit BurnFeesWithdrawn(amount);
     }
 
     /// Restrict who can upgrade this contract
@@ -323,20 +363,15 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         }
     }
 
-    /// @dev Deploys a new wrapped ERC20 token. Can only be called by controllers.
-    /// @param name Token name
-    /// @param symbol Token symbol
-    /// @param decimals Token decimals
-    /// @param baseTokenID Base token ID to map to wrapped token
-    /// @return address The deployed wrapped token address
-    /// @inheritdoc TokenManager
-    function deployERC20(
+    /// @dev Deploys a new wrapped ERC20 token with access control
+    /// @notice Can only be called by controllers
+    function deployWrappedToken(
         string memory name,
         string memory symbol,
         uint8 decimals,
         bytes32 baseTokenID
-    ) public override onlyControllers returns (address) {
-        return super.deployERC20(name, symbol, decimals, baseTokenID);
+    ) public onlyControllers returns (address) {
+        return deployERC20(name, symbol, decimals, baseTokenID);
     }
 
     /// Charge fee from the user.
@@ -369,15 +404,36 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         bytes memory recipientID,
         bytes32 memo
     ) public payable whenNotPaused returns (uint32) {
+        require(msg.value >= burnFeeInWei, "Insufficient burn fee");
+
+        //  collectedBurnFees += burnFeeInWei;
+        //   // Refund excess
+        // uint256 excess = msg.value - burnFeeInWei;
+        // if(excess > 0) {
+        //     (bool success,) = msg.sender.call{value: excess}("");
+        //     require(success, "Refund failed");
+        // }
+
         // Handle native token case first
         if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
-            require(msg.value == amount, "Incorrect ETH amount sent");
-            // Skip token registration check for native token
+            require(msg.value == amount + burnFeeInWei, "Must send: amount + fee");
+
+            // Separate bridge amount and fee
+            uint256 bridgeAmount = msg.value - burnFeeInWei;
+            require(bridgeAmount == amount, "Bridge amount mismatch");
+
+            // Collect fee
+            collectedBurnFees += burnFeeInWei;
         } else if (_wrappedToBase[fromERC20] == bytes32(0) && toTokenID == bytes32(0)) {
             // This is wrapped ETH being burned to get native ETH
+            require(msg.value == burnFeeInWei, "Must send fee");
             require(!isBaseSide(), "Invalid operation on base side");
+            collectedBurnFees += burnFeeInWei;
             IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
         } else {
+            // Regular ERC20 token handling
+            require(msg.value == burnFeeInWei, "Must send fee");
+
             // Only check token registration for non-native tokens
             require(
                 isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
@@ -390,6 +446,8 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
             uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
             require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
+
+            collectedBurnFees += burnFeeInWei;
 
             if (isWrappedSide && currentAllowance < amount) {
                 WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
