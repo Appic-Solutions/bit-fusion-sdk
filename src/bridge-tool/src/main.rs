@@ -141,6 +141,9 @@ struct DeployBtfArgs {
     /// Identity Path
     #[arg(long)]
     identity_path: Option<String>,
+
+    // Fee to be paid for calling BTF bridge burn function
+    burn_fee_in_wei: String,
 }
 
 #[derive(Debug, Parser)]
@@ -528,6 +531,9 @@ async fn deploy_btf_bridge(args: DeployBtfArgs) {
             .expect("failed to parse wrapped token deployer address"),
     );
 
+    let burn_fee_in_wei =
+        U256::from_hex_str(&args.burn_fee_in_wei).expect("failed to parse burn fee in wei");
+
     async fn deploy_contract(
         client: &EvmCanisterClient<IcAgentClient>,
         wallet: &Wallet<'_, SigningKey>,
@@ -580,6 +586,7 @@ async fn deploy_btf_bridge(args: DeployBtfArgs) {
         isWrappedSide: args.is_wrapped_side,
         owner: [0; 20].into(),
         controllers: vec![],
+        _burnFeeInWei: burn_fee_in_wei.into(),
     }
     .abi_encode();
 

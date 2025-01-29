@@ -275,6 +275,7 @@ pub trait TestContext {
         minter_canister_address: H160,
         fee_charge_address: Option<H160>,
         wrapped_token_deployer: H160,
+        burn_fee_in_wei: U256,
     ) -> Result<H160> {
         let client = self.evm_client(self.admin_name());
         self.initialize_btf_bridge_on_evm(
@@ -283,6 +284,7 @@ pub trait TestContext {
             fee_charge_address,
             wrapped_token_deployer,
             true,
+            burn_fee_in_wei,
         )
         .await
     }
@@ -295,6 +297,7 @@ pub trait TestContext {
         fee_charge_address: Option<H160>,
         wrapped_token_deployer: H160,
         is_wrapped: bool,
+        burn_fee_in_wei: U256,
     ) -> Result<H160> {
         evm_client
             .admin_mint_native_tokens(minter_canister_address.clone(), u64::MAX.into())
@@ -310,6 +313,7 @@ pub trait TestContext {
                 fee_charge_address,
                 wrapped_token_deployer,
                 is_wrapped,
+                burn_fee_in_wei,
             )
             .await?;
 
@@ -324,6 +328,7 @@ pub trait TestContext {
         fee_charge_address: Option<H160>,
         wrapped_token_deployer: H160,
         is_wrapped: bool,
+        burn_fee_in_wei: U256,
     ) -> Result<H160> {
         let evm_client = self.evm_client(self.admin_name());
         self.initialize_btf_bridge_with_minter_on_evm(
@@ -333,6 +338,7 @@ pub trait TestContext {
             fee_charge_address,
             wrapped_token_deployer,
             is_wrapped,
+            burn_fee_in_wei,
         )
         .await
     }
@@ -346,6 +352,7 @@ pub trait TestContext {
         fee_charge_address: Option<H160>,
         wrapped_token_deployer: H160,
         is_wrapped: bool,
+        burn_fee_in_wei: U256,
     ) -> Result<H160> {
         let mut bridge_input = BTFBridge::BYTECODE.to_vec();
         let constructor = BTFBridge::constructorCall {}.abi_encode();
@@ -365,6 +372,7 @@ pub trait TestContext {
             isWrappedSide: is_wrapped,
             owner: [0; 20].into(),
             controllers: vec![],
+            _burnFeeInWei: burn_fee_in_wei.into(),
         }
         .abi_encode();
 
