@@ -44,7 +44,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     // Has a user's transaction nonce been used?
     mapping(bytes32 => mapping(uint32 => bool)) private _isNonceUsed;
 
-    // Block numbers for users deposit Ids.
+    // Blocknumbers for users deposit Ids.
     mapping(address => mapping(uint8 => uint32)) private _userDepositBlocks;
 
     // Last 255 user's burn operations.
@@ -111,6 +111,9 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
     /// Event that can be emitted with a notification for the minter canister
     event NotifyMinterEvent(uint32 notificationType, address txSender, bytes userData, bytes32 memo);
+
+    event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
+    event BurnFeesWithdrawn(uint256 amount);
 
     event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
     event BurnFeesWithdrawn(uint256 amount);
@@ -365,13 +368,13 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
     /// @dev Deploys a new wrapped ERC20 token with access control
     /// @notice Can only be called by controllers
-    function deployWrappedToken(
+    function deployERC20(
         string memory name,
         string memory symbol,
         uint8 decimals,
         bytes32 baseTokenID
-    ) public onlyControllers returns (address) {
-        return deployERC20(name, symbol, decimals, baseTokenID);
+    ) public override onlyControllers returns (address) {
+        return super.deployERC20(name, symbol, decimals, baseTokenID);
     }
 
     /// Charge fee from the user.
@@ -446,6 +449,8 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
             uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
             require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
+
+            collectedBurnFees += burnFeeInWei;
 
             collectedBurnFees += burnFeeInWei;
 
