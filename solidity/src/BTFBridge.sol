@@ -112,9 +112,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     /// Event that can be emitted with a notification for the minter canister
     event NotifyMinterEvent(uint32 notificationType, address txSender, bytes userData, bytes32 memo);
 
-    event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
-    event BurnFeesWithdrawn(uint256 amount);
-
+  
     event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
     event BurnFeesWithdrawn(uint256 amount);
 
@@ -452,7 +450,6 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
             collectedBurnFees += burnFeeInWei;
 
-            collectedBurnFees += burnFeeInWei;
 
             if (isWrappedSide && currentAllowance < amount) {
                 WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
