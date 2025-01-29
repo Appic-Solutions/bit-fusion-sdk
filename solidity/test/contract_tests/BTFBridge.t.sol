@@ -1332,4 +1332,163 @@ contract BTFBridgeTest is Test {
 
         vm.stopPrank();
     }
+
+
+    function testBurnFeeCollection() public {
+    // Start with owner to set up initial state
+    vm.startPrank(_owner);
+    
+    // Set and verify burn fee
+    uint256 burnFee = 0.01 ether;
+    _baseBridge.updateBurnFee(burnFee);
+    assertEq(_baseBridge.burnFeeInWei(), burnFee, "Burn fee not set");
+    
+    // Create token and mint to owner using batch mint
+    bytes32 baseTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    address wrappedToken = _wrappedBridge.deployERC20("Test", "TST", 18, baseTokenId);
+    
+    // Create mint order for Alice
+    uint256 burnAmount = 1 ether;
+    MintOrder memory order = MintOrder({
+        amount: burnAmount,
+        senderID: baseTokenId,
+        fromTokenID: baseTokenId,
+        recipient: _alice,
+        toERC20: wrappedToken,
+        nonce: 0,
+        senderChainID: 0,
+        recipientChainID: _CHAIN_ID,
+        name: StringUtils.truncateUTF8("Test"),
+        symbol: bytes16(StringUtils.truncateUTF8("TST")),
+        decimals: 18,
+        approveSpender: address(0),
+        approveAmount: 0,
+        feePayer: address(0)
+    });
+
+    // Batch mint tokens to Alice
+    MintOrder[] memory orders = new MintOrder[](1);
+    orders[0] = order;
+    bytes memory encodedOrders = _batchMintOrders(orders);
+    bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+    
+    uint32[] memory ordersToProcess = new uint32[](1);
+    ordersToProcess[0] = 0;
+    _wrappedBridge.batchMint(encodedOrders, signature, ordersToProcess);
+    
+    vm.stopPrank();
+
+    // Verify Alice received tokens
+    assertEq(WrappedToken(wrappedToken).balanceOf(_alice), burnAmount, "Token mint failed");
+
+    // Setup Alice for burn
+    vm.startPrank(_alice);
+    vm.deal(_alice, burnFee);  // Give Alice just the fee amount
+    
+    // Record initial states
+    uint256 initialAliceBalance = _alice.balance;
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    uint256 initialCollectedFees = _baseBridge.collectedBurnFees();
+    
+    // Approve bridge to spend tokens
+    WrappedToken(wrappedToken).approve(address(_baseBridge), burnAmount);
+    
+    // Burn with fee
+    _baseBridge.burn{value: burnFee}(
+        burnAmount,
+        wrappedToken,
+        baseTokenId,
+        abi.encodePacked(uint8(1)),
+        bytes32(0)
+    );
+    
+    // Verify state changes
+    assertEq(_baseBridge.collectedBurnFees(), initialCollectedFees + burnFee, "Fee collection failed");
+    assertEq(address(_baseBridge).balance, initialBridgeBalance + burnFee, "Bridge balance incorrect");
+    assertEq(_alice.balance, initialAliceBalance - burnFee, "Alice balance incorrect");
+    assertEq(WrappedToken(wrappedToken).balanceOf(_alice), 0, "Tokens not burned");
+    
+    vm.stopPrank();
+}
+
+function testNativeTokenBurnFeeCollection() public {
+    vm.startPrank(_owner);
+    
+    // Set fee to 0.01 ETH
+    uint256 burnFee = 0.01 ether;
+    _baseBridge.updateBurnFee(burnFee);
+    
+    vm.stopPrank();
+    
+    // Test burning ETH
+    uint256 burnAmount = 1 ether;
+    uint256 totalRequired = burnAmount + burnFee;
+    
+    vm.deal(_alice, totalRequired);
+    vm.startPrank(_alice);
+    
+    _baseBridge.burn{value: totalRequired}(
+        burnAmount,
+        _baseBridge.NATIVE_TOKEN_ADDRESS(),  // Use native token address
+        bytes32(0),  // Native token ID
+        abi.encodePacked(uint8(1)),
+        bytes32(0)
+    );
+    
+    assertEq(_baseBridge.collectedBurnFees(), burnFee, "Fee not collected");
+    vm.stopPrank();
+}
+
+    function testBurnFeeWithdrawal() public {
+    // Setup initial state
+    vm.startPrank(_owner);
+    uint256 burnFee = 0.01 ether;
+    _baseBridge.updateBurnFee(burnFee);
+    
+    // Setup token for burn
+    bytes32 baseTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    address wrappedToken = _wrappedBridge.deployERC20("Test", "TST", 18, baseTokenId);
+    vm.stopPrank();
+    
+    // Setup and execute burn to collect fees
+    vm.startPrank(_alice);
+    vm.deal(_alice, burnFee);
+    
+    // Record initial balances
+    uint256 initialBridgeBalance = address(_baseBridge).balance;
+    uint256 initialCollectedFees = _baseBridge.collectedBurnFees();
+    
+    // Burn with fee
+    _baseBridge.burn{value: burnFee}(
+        0,  // Zero burn amount to test just fee
+        wrappedToken,
+        baseTokenId,
+        abi.encodePacked(uint8(1)),
+        bytes32(0)
+    );
+    
+    // Verify fee collection
+    assertEq(_baseBridge.collectedBurnFees(), initialCollectedFees + burnFee, "Fee not collected");
+    assertEq(address(_baseBridge).balance, initialBridgeBalance + burnFee, "Bridge balance wrong");
+    vm.stopPrank();
+    
+    // Test non-owner withdrawal
+    vm.startPrank(_alice);
+    vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", _alice));
+    _baseBridge.withdrawBurnFees();
+    vm.stopPrank();
+    
+    // Test owner withdrawal
+    uint256 initialOwnerBalance = _owner.balance;
+    vm.startPrank(_owner);
+    _baseBridge.withdrawBurnFees();
+    
+    // Verify withdrawal
+    assertEq(_owner.balance, initialOwnerBalance + burnFee, "Fee withdrawal failed");
+    assertEq(_baseBridge.collectedBurnFees(), 0, "Collected fees not reset");
+    vm.stopPrank();
+}
+
+ 
+
 }
