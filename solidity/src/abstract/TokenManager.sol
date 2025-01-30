@@ -59,7 +59,7 @@ abstract contract TokenManager is Initializable {
         string memory symbol,
         uint8 decimals,
         bytes32 baseTokenID
-    ) public returns (address) {
+    ) public virtual returns (address) {
         require(isWrappedSide, "Only for wrapped side");
         require(_baseToWrapped[baseTokenID] == address(0), "Wrapper already exist");
 

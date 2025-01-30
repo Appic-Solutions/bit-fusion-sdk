@@ -67,4 +67,3 @@ contract DeploBTFTBridge is DeployScript {
         );
     }
 }
-

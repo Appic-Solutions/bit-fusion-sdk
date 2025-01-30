@@ -127,7 +127,7 @@ describe("BTF Bridge Native Token Tests", () => {
         it("should fail if user has insufficient ETH", async function () {
             this.timeout(30000);
         
-            const amount = ethers.parseEther("1000"); // Large amount to force failure
+            const amount = ethers.parseEther("1000"); 
             const toTokenId = ethers.zeroPadBytes(ethers.toUtf8Bytes("NATIVE_TOKEN"), 32);
             const recipientId = ethers.toUtf8Bytes(await signer.getAddress());
             const memo = ethers.ZeroHash;

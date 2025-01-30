@@ -38,6 +38,9 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     // Minimal amount of fee deposit to process mint order.
     uint256 constant MIN_FEE_DEPOSIT_AMOUNT = COMMON_BATCH_MINT_GAS_FEE + ORDER_BATCH_MINT_GAS_FEE;
 
+    uint256 public burnFeeInWei;
+    uint256 public collectedBurnFees;
+
     // Has a user's transaction nonce been used?
     mapping(bytes32 => mapping(uint32 => bool)) private _isNonceUsed;
 
@@ -106,8 +109,12 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         bytes32 memo
     );
 
-    /// Event that can be emited with a notification for the minter canister
+    /// Event that can be emitted with a notification for the minter canister
     event NotifyMinterEvent(uint32 notificationType, address txSender, bytes userData, bytes32 memo);
+
+  
+    event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
+    event BurnFeesWithdrawn(uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -115,25 +122,31 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         _disableInitializers();
     }
 
-    /// Initializes the BTFBridge contract.
-    ///
-    /// @param minterAddress The address of the minter canister.
-    /// @param feeChargeAddress The address of the fee charge contract.
-    /// @param isWrappedSide A boolean indicating whether this is the wrapped side of the bridge.
-    /// @param owner The initial owner of the contract. If set to 0x0, the caller becomes the owner.
-    /// @param controllers The initial list of authorized controllers.
-    /// @dev This function is called only once during the contract deployment.
+    /**
+     * @dev Initializes the BTFBridge contract with required parameters
+     * @param minterAddress Address of the minter canister
+     * @param feeChargeAddress Address of the fee charge contract
+     * @param wrappedTokenDeployer Address authorized to deploy wrapped tokens
+     * @param isWrappedSide Whether this is the wrapped token side of the bridge
+     * @param owner Initial owner address (if 0x0, msg.sender becomes owner)
+     * @param controllers Initial list of authorized controllers
+     * @param _burnFeeInWei Initial burn fee in wei
+     * @dev This function is called only once during the contract deployment.
+     */
     function initialize(
         address minterAddress,
         address feeChargeAddress,
         address wrappedTokenDeployer,
         bool isWrappedSide,
         address owner,
-        address[] memory controllers
+        address[] memory controllers,
+        uint256 _burnFeeInWei
     ) public initializer {
         minterCanisterAddress = minterAddress;
         feeChargeContract = IFeeCharge(feeChargeAddress);
         __TokenManager__init(isWrappedSide, wrappedTokenDeployer);
+
+        burnFeeInWei = _burnFeeInWei;
 
         // Set the owner
         address newOwner = owner != address(0) ? owner : msg.sender;
@@ -151,7 +164,45 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         __Pausable_init();
     }
 
-    /// Restrict who can upgrade this contract
+    /**
+     * @dev Updates the burn fee required for token burning operations
+     * @param _newFeeInWei New fee amount in wei
+     * @notice Only callable by owner
+     * @notice Emits BurnFeeUpdated event
+     */
+    function updateBurnFee(
+        uint256 _newFeeInWei
+    ) external onlyOwner {
+        emit BurnFeeUpdated(burnFeeInWei, _newFeeInWei);
+        burnFeeInWei = _newFeeInWei;
+    }
+
+    /**
+     * @dev Allows owner to withdraw accumulated burn fees
+     * @notice Only callable by owner
+     * @notice Requires collected fees > 0
+     * @notice Follows CEI pattern
+     * @notice Emits BurnFeesWithdrawn event
+     */
+    function withdrawBurnFees() external onlyOwner {
+        uint256 amount = collectedBurnFees;
+        require(amount > 0, "No fees to withdraw");
+
+        // Update state before transfer
+        collectedBurnFees = 0;
+
+        // Transfer fees
+        (bool success,) = msg.sender.call{ value: amount }("");
+        require(success, "Fee withdrawal failed");
+
+        emit BurnFeesWithdrawn(amount);
+    }
+    
+    /**
+     * @dev Internal authorization check for contract upgrades
+     * @param newImplementation Address of new implementation
+     * @notice Only allows upgrades to pre-approved implementations
+     */
     function _authorizeUpgrade(
         address newImplementation
     ) internal view override onlyOwner {
@@ -179,6 +230,11 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     }
 
     /// Add a new implementation to the allowed list
+     /**
+     * @dev Adds new implementation hash to allowed list
+     * @param bytecodeHash Hash of the implementation bytecode
+     * @notice Only callable by controllers
+     */
     function addAllowedImplementation(
         bytes32 bytecodeHash
     ) external onlyControllers {
@@ -196,6 +252,11 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
     /// Adds the given `controller` address to the `controllerAccessList`.
     /// This function can only be called by the contract owner.
+    /**
+     * @dev Adds new controller to access list
+     * @param controller Address to add as controller
+     * @notice Only callable by owner
+     */
     function addController(
         address controller
     ) external onlyOwner {
@@ -204,14 +265,25 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
     /// Removes the given `controller` address from the `controllerAccessList`.
     /// This function can only be called by the contract owner.
+     /**
+     * @dev Removes controller from access list
+     * @param controller Address to remove from controllers
+     * @notice Only callable by owner
+     */
     function removeController(
         address controller
     ) external onlyOwner {
         controllerAccessList[controller] = false;
     }
 
-    /// Transfer funds to users according the signed encoded orders.
-    /// Returns `processedOrders` array of error codes for each mint order;
+    /**
+     * @dev Processes a batch of mint orders with signature verification
+     * @param encodedOrders Byte array of encoded mint orders
+     * @param signature Signature from authorized minter
+     * @param ordersToProcess Array of order indices to process
+     * @return Array of error codes for each processed order
+     * @notice Validates orders and mints tokens according to specifications
+     */
     function batchMint(
         bytes calldata encodedOrders,
         bytes calldata signature,
@@ -279,7 +351,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
         for (uint32 i = 0; i < ordersNumber; i++) {
             if (processedOrderIndexes[i] == MINT_ERROR_CODE_OK) {
-                // Array indexes inlined to soleve StackTooDeep problem.
+                // Array indexes inlined to solve StackTooDeep problem.
                 MintOrderData memory order =
                     _decodeOrder(encodedOrders[MINT_ORDER_DATA_LEN * i:MINT_ORDER_DATA_LEN * i + MINT_ORDER_DATA_LEN]);
                 if (_isFeeRequired()) {
@@ -292,6 +364,13 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         return processedOrderIndexes;
     }
 
+     /**
+     * @dev Internal function to process individual mint operations
+     * @param order MintOrderData struct containing mint parameters
+     * @notice Handles both native and ERC20 token minting
+     * @notice Updates token metadata for wrapped tokens
+     * @notice Handles approval settings if specified
+     */
     function _mintInner(
         MintOrderData memory order
     ) private {
@@ -323,21 +402,52 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         }
     }
 
-    /// Charge fee from the user.
+     /**
+     * @dev Deploys a new wrapped ERC20 token
+     * @param name Name of the token
+     * @param symbol Symbol of the token
+     * @param decimals Number of decimals for the token
+     * @param baseTokenID Identifier of the base token
+     * @return Address of the deployed token
+     * @notice Only callable by controllers
+     */
+    function deployERC20(
+        string memory name,
+        string memory symbol,
+        uint8 decimals,
+        bytes32 baseTokenID
+    ) public override onlyControllers returns (address) {
+        return super.deployERC20(name, symbol, decimals, baseTokenID);
+    }
+    
+     /**
+     * @dev Internal function to charge fees from users
+     * @param from Address to charge fee from
+     * @param amount Amount of fee to charge
+     * @notice Only charges if amount is non-zero
+     */
     function _chargeFee(address from, uint256 amount) private {
         if (amount != 0) {
             feeChargeContract.chargeFee(from, payable(minterCanisterAddress), amount);
         }
     }
 
-    // Emit Minted event according to the order.
+    /**
+     * @dev Emits event for successful mint operation
+     * @param order MintOrderData containing operation details
+     * @param feeAmount Amount of fee charged for the operation
+     */
     function _emitMintedEvent(MintOrderData memory order, uint256 feeAmount) private {
         emit MintTokenEvent(
             order.amount, order.fromTokenID, order.senderID, order.toERC20, order.recipient, order.nonce, feeAmount
         );
     }
 
-    /// Getter function for block numbers
+    /**
+     * @dev Retrieves all deposit block numbers for the caller
+     * @return blockNumbers Array of block numbers for caller's deposits
+     * @notice Useful for tracking deposit history
+     */
     function getDepositBlocks() external view returns (uint32[] memory blockNumbers) {
         blockNumbers = _lastUserBurns[msg.sender].getAll();
     }
@@ -346,6 +456,17 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
     /// If Erc20, caller should approve transfer in the given `from_erc20` token for the bridge contract.
     /// If native caller should provide msg.value .
     /// Returns operation ID if operation is successful.
+    /**
+     * @dev Burns tokens to initiate cross-chain transfer
+     * @param amount Amount of tokens to burn
+     * @param fromERC20 Token contract address (or 0x0 for native token)
+     * @param toTokenID Identifier of destination token
+     * @param recipientID Recipient identifier on destination chain
+     * @param memo Additional data for the burn operation
+     * @return Operation ID for tracking
+     * @notice Requires burn fee in msg.value
+     * @notice Handles both native and ERC20 tokens
+     */
     function burn(
         uint256 amount,
         address fromERC20,
@@ -353,27 +474,52 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         bytes memory recipientID,
         bytes32 memo
     ) public payable whenNotPaused returns (uint32) {
-        // Check if the token is registered on the bridge or the side is base
-        require(
-            isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
-            "Invalid from address; not registered in the bridge"
-        );
-        require(amount > 0, "Invalid burn amount");
+        require(msg.value >= burnFeeInWei, "Insufficient burn fee");
 
+        //  collectedBurnFees += burnFeeInWei;
+        //   // Refund excess
+        // uint256 excess = msg.value - burnFeeInWei;
+        // if(excess > 0) {
+        //     (bool success,) = msg.sender.call{value: excess}("");
+        //     require(success, "Refund failed");
+        // }
+
+        // Handle native token case first
         if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
-            // Native token handling
-            require(msg.value == amount, "Incorrect ETH amount sent");
+            require(msg.value == amount + burnFeeInWei, "Must send: amount + fee");
+
+            // Separate bridge amount and fee
+            uint256 bridgeAmount = msg.value - burnFeeInWei;
+            require(bridgeAmount == amount, "Bridge amount mismatch");
+
+            // Collect fee
+            collectedBurnFees += burnFeeInWei;
+        } else if (_wrappedToBase[fromERC20] == bytes32(0) && toTokenID == bytes32(0)) {
+            // This is wrapped ETH being burned to get native ETH
+            require(msg.value == burnFeeInWei, "Must send fee");
+            require(!isBaseSide(), "Invalid operation on base side");
+            collectedBurnFees += burnFeeInWei;
+            IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
         } else {
-            // ERC-20 handling
+            // Regular ERC20 token handling
+            require(msg.value == burnFeeInWei, "Must send fee");
+
+            // Only check token registration for non-native tokens
+            require(
+                isBaseSide() || (_wrappedToBase[fromERC20] != bytes32(0) && _baseToWrapped[toTokenID] != address(0)),
+                "Invalid from address; not registered in the bridge"
+            );
+
+            // Rest of ERC20 handling
             require(fromERC20 != address(this), "Invalid fromERC20 address");
             require(fromERC20 != address(0), "Invalid fromERC20 address");
 
             uint256 currentAllowance = IERC20(fromERC20).allowance(msg.sender, address(this));
-
-            // Check if the user has enough allowance; on wrapped side, the bridge will approve the tokens by itself
             require(isWrappedSide || currentAllowance >= amount, "Insufficient allowance");
 
-            // Authorize the bridge to transfer the tokens if the side is wrapped
+            collectedBurnFees += burnFeeInWei;
+
+
             if (isWrappedSide && currentAllowance < amount) {
                 WrappedToken(fromERC20).approveByOwner(msg.sender, address(this), amount);
             }
@@ -381,11 +527,18 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
             IERC20(fromERC20).safeTransferFrom(msg.sender, address(this), amount);
         }
 
-        // Update user information about burn operations.
+        // Common operations for both native and ERC20
         _lastUserBurns[msg.sender].push(uint32(block.number));
 
-        // get the token details
-        TokenMetadata memory meta = getTokenMetadata(fromERC20);
+        // Get token metadata
+        TokenMetadata memory meta;
+        if (fromERC20 == NATIVE_TOKEN_ADDRESS) {
+            meta.name = bytes32("Ethereum");
+            meta.symbol = bytes16("ETH");
+            meta.decimals = 18;
+        } else {
+            meta = getTokenMetadata(fromERC20);
+        }
 
         uint32 operationID = operationIDCounter++;
 
@@ -405,39 +558,32 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         return operationID;
     }
 
-    /// Getter function for minter address
+    /**
+     * @dev Retrieves the minter canister address
+     * @return Address of the minter canister
+     */
     function getMinterAddress() external view returns (address) {
         return minterCanisterAddress;
     }
 
-    /// Returns true if mint fee must be charged.
+    /**
+     * @dev Checks if fee charging is required for current operation
+     * @return Boolean indicating if fee should be charged
+     */
     function _isFeeRequired() private view returns (bool) {
         return minterCanisterAddress == msg.sender && address(feeChargeContract) != address(0);
     }
 
-    /// Function to validate the mint order.
-    /// Reverts on failure.
-    function _validateOrder(
-        MintOrderData memory order
-    ) private view {
-        // Assert recipient address is not zero
-        require(order.recipient != address(0), "Invalid destination address");
-
-        // Check if amount is greater than zero
-        require(order.amount > 0, "Invalid order amount");
-
-        // Check if nonce is not stored in the list
-        require(!_isNonceUsed[order.senderID][order.nonce], "Invalid nonce");
-
-        // Check if withdrawal is happening on the correct chain
-        require(block.chainid == order.recipientChainID, "Invalid chain ID");
-
-        if (_wrappedToBase[order.toERC20] != bytes32(0)) {
-            require(_baseToWrapped[order.fromTokenID] == order.toERC20, "SRC token and DST token must be a valid pair");
-        }
-    }
-
-    /// Function to check if the mint order is valid.
+    /**
+     * @dev Validates mint order parameters
+     * @param order MintOrderData to validate
+     * @return Error code indicating validation result (0 for success)
+     * @notice Checks various conditions including:
+     * - Non-zero recipient and amount
+     * - Unused nonce
+     * - Correct chain ID
+     * - Valid token registration
+     */
     function _isOrderValid(
         MintOrderData memory order
     ) private view returns (uint8) {
@@ -461,6 +607,11 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
             return MINT_ERROR_CODE_UNEXPECTED_RECIPIENT_CHAIN_ID;
         }
 
+        // Handle ETH separately before checking ERC-20 logic
+        if (order.toERC20 == NATIVE_TOKEN_ADDRESS) {
+            return MINT_ERROR_CODE_OK; // Native token operation is valid
+        }
+
         // Check if tokens are bridged.
         if (_wrappedToBase[order.toERC20] != bytes32(0) && _baseToWrapped[order.fromTokenID] != order.toERC20) {
             return MINT_ERROR_CODE_TOKENS_NOT_BRIDGED;
@@ -469,18 +620,34 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
         return MINT_ERROR_CODE_OK;
     }
 
+    /**
+     * @dev Extracts fee payer address from encoded order
+     * @param encodedOrder Raw bytes of the order
+     * @return Address of the fee payer
+     */
     function _decodeOrderFeePayer(
         bytes calldata encodedOrder
     ) private pure returns (address) {
         return address(bytes20(encodedOrder[249:269]));
     }
 
+    /**
+     * @dev Extracts sender ID from encoded order
+     * @param encodedOrder Raw bytes of the order
+     * @return bytes32 sender identifier
+     */
     function _decodeOrderSenderID(
         bytes calldata encodedOrder
     ) private pure returns (bytes32) {
         return bytes32(encodedOrder[32:64]);
     }
 
+    /**
+     * @dev Decodes complete mint order from bytes
+     * @param encodedOrder Raw bytes of the order
+     * @return order Decoded MintOrderData struct
+     * @notice Handles parsing of all order parameters
+     */
     function _decodeOrder(
         bytes calldata encodedOrder
     ) private pure returns (MintOrderData memory order) {

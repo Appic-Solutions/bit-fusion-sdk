@@ -116,6 +116,7 @@ impl<Ctx: TestContext + Send + Sync> Erc20BaseTokens<Ctx> {
                 None,
                 base_wrapped_token_deployer,
                 false,
+                U256::from(1_000_000_u128),
             )
             .await
             .unwrap();

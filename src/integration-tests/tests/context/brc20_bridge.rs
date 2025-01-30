@@ -315,6 +315,7 @@ where
                 None,
                 wrapped_token_deployer,
                 true,
+                U256::from(1_000_000_u128),
             )
             .await
             .unwrap();

@@ -165,6 +165,7 @@ impl<'a, B: BaseTokens> StressTestState<'a, B> {
                         Some(expected_fee_charge_address.into()),
                         wrapped_token_deployer,
                         true,
+                        U256::from(1_000_000_u128),
                     )
                     .await?;
 
@@ -191,6 +192,7 @@ impl<'a, B: BaseTokens> StressTestState<'a, B> {
                         None,
                         wrapped_token_deployer,
                         true,
+                        U256::from(1_000_000_u128),
                     )
                     .await?;
 
