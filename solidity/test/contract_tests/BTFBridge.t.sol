@@ -50,6 +50,9 @@ contract BTFBridgeTest is Test {
     address wrappedProxy;
     address baseProxy;
 
+    event BurnFeeUpdated(uint256 oldFee, uint256 newFee);
+    event BurnFeesWithdrawn(uint256 amount);
+
     function setUp() public {
         vm.chainId(_CHAIN_ID);
         vm.startPrank(_owner);
@@ -1489,6 +1492,87 @@ function testNativeTokenBurnFeeCollection() public {
     vm.stopPrank();
 }
 
- 
+    function testBurnWithoutFee() public {
+    // 1. Owner setup
+    vm.startPrank(_owner);
+    
+    // Set burn fee
+    uint256 burnFee = 0.01 ether;
+    _baseBridge.updateBurnFee(burnFee);
+    
+    // Create and deploy token
+    bytes32 baseTokenId = _createIdFromPrincipal(abi.encodePacked(uint8(1)));
+    address wrappedToken = _wrappedBridge.deployERC20("Test", "TST", 18, baseTokenId);
+    
+    // Create and mint tokens to Alice
+    MintOrder memory order = _createDefaultMintOrder(baseTokenId, wrappedToken, 0);
+    order.recipient = _alice;
+    order.amount = 1 ether;
+    
+    // Batch mint
+    MintOrder[] memory orders = new MintOrder[](1);
+    orders[0] = order;
+    bytes memory encodedOrders = _batchMintOrders(orders);
+    bytes memory signature = _batchMintOrdersSignature(encodedOrders, _OWNER_KEY);
+    _wrappedBridge.batchMint(encodedOrders, signature, new uint32[](0));
+    
+    vm.stopPrank();
+
+    // Verify initial state
+    assertEq(WrappedToken(wrappedToken).balanceOf(_alice), 1 ether, "Token mint failed");
+
+    // Try burning without fee
+    vm.startPrank(_alice);
+    
+    // Approve bridge
+    WrappedToken(wrappedToken).approve(address(_baseBridge), 1 ether);
+    
+    // Try to burn without fee - should fail
+    vm.expectRevert("Insufficient burn fee"); // Changed to match actual contract error
+    _baseBridge.burn(
+        1 ether,
+        wrappedToken,
+        baseTokenId,
+        abi.encodePacked(uint8(1)),
+        bytes32(0)
+    );
+    
+    // Verify nothing changed
+    assertEq(WrappedToken(wrappedToken).balanceOf(_alice), 1 ether, "Tokens should not be burned");
+    
+    vm.stopPrank();
+}
+function testBurnFeeUpdate() public {
+    vm.startPrank(_owner);
+    
+    uint256 newFee = 0.02 ether;
+    uint256 oldFee = _baseBridge.burnFeeInWei();
+    
+    // Expect event emission
+    vm.expectEmit(true, true, false, true);
+    emit BurnFeeUpdated(oldFee, newFee);
+    
+    // Update fee as owner
+    _baseBridge.updateBurnFee(newFee);
+    assertEq(_baseBridge.burnFeeInWei(), newFee, "Fee not updated");
+    
+    vm.stopPrank();
+    
+    // Test non-owner access
+    vm.startPrank(_alice);
+    // Use the correct error format for OpenZeppelin's Ownable
+    vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", _alice));
+    _baseBridge.updateBurnFee(0.03 ether);
+    vm.stopPrank();
+    
+    // Verify fee didn't change
+    assertEq(_baseBridge.burnFeeInWei(), newFee, "Fee should not change from non-owner");
+}
+
+    function testZeroFeeWithdrawal() public {
+        vm.prank(_owner);
+        vm.expectRevert("No fees to withdraw");
+        _baseBridge.withdrawBurnFees();
+    }
 
 }

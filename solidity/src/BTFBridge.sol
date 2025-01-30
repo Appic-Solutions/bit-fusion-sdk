@@ -197,7 +197,7 @@ contract BTFBridge is TokenManager, UUPSUpgradeable, OwnableUpgradeable, Pausabl
 
         emit BurnFeesWithdrawn(amount);
     }
-
+    
     /**
      * @dev Internal authorization check for contract upgrades
      * @param newImplementation Address of new implementation
